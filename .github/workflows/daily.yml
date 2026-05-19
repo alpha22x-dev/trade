@@ -1,9 +1,5 @@
 name: Alpha22x Daily Check
 
-    # Runs Mon-Fri at 07:25 UTC.
-    # This corresponds to 09:25 in Europe/Berlin during summer time (CEST).
-    #- cron: "25 7 * * 1-5"
-    
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -16,17 +12,11 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install deps
-        run: pip install requests
-
+      - run: pip install requests
       - name: Run script
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
