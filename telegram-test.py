@@ -1,137 +1,102 @@
 import os
-import json
+import time
 import requests
 import datetime as dt
 from zoneinfo import ZoneInfo
 
-# ---------------------------
-# Config
-# ---------------------------
 TZ = ZoneInfo("Europe/Berlin")
 
-SIE_SYMBOL = "SIE.DE"
-MKT_SYMBOL = "EXS1.DE"  # DAX ETF proxy (verify symbol in your provider)
+SIE = "SIE.DE"     # Siemens (Xetra) [1](https://finance.yahoo.com/quote/SIE.DE/)
+MKT = "^GDAXI"     # DAX index [2](https://uk.finance.yahoo.com/quote/%5EGDAXI/)
 
-GAP_MIN = 0.003  # +0.3%
-GAP_MAX = 0.015  # +1.5% optional filter
+GAP_MIN = 0.003    # +0.3%
+GAP_MAX = 0.015    # +1.5%
 
-TD_APIKEY = os.environ["TWELVEDATA_APIKEY"]
 TG_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
 TG_CHATID = os.environ["TELEGRAM_CHAT_ID"]
 
-BASE = "https://api.twelvedata.com"
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
 
-# ---------------------------
-# Helpers: Twelve Data
-# ---------------------------
-def td_get(path, params):
-    params = dict(params)
-    params["apikey"] = TD_APIKEY
-    r = requests.get(f"{BASE}/{path}", params=params, timeout=20)
-    r.raise_for_status()
-    data = r.json()
-    # Twelve Data returns status != ok on errors for many endpoints [2](https://publicapi.dev/twelve-data-api)[1](https://twelvedata.com/docs)
-    if isinstance(data, dict) and data.get("status") not in (None, "ok"):
-        raise RuntimeError(f"TwelveData error: {data}")
-    return data
-
-def td_time_series(symbol, interval, **kwargs):
-    # Uses /time_series endpoint [2](https://publicapi.dev/twelve-data-api)[5](https://support.twelvedata.com/en/articles/5214728-getting-historical-data)
-    params = {"symbol": symbol, "interval": interval}
-    params.update(kwargs)
-    return td_get("time_series", params)
-
-def td_price(symbol):
-    # Uses /price endpoint [1](https://twelvedata.com/docs)
-    return td_get("price", {"symbol": symbol})
-
-# ---------------------------
-# Helpers: Telegram
-# ---------------------------
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    payload = {"chat_id": TG_CHATID, "text": text, "disable_web_page_preview": True}
-    r = requests.post(url, json=payload, timeout=20)
+    r = requests.post(url, json={"chat_id": TG_CHATID, "text": text}, timeout=20)
     r.raise_for_status()
 
-# ---------------------------
-# Market snapshot logic
-# ---------------------------
-def prev_close_1day(symbol: str) -> float:
-    # Request last 2 daily bars; newest first is typical
-    ts = td_time_series(symbol, "1day", outputsize=2, timezone="Exchange")  # timezone param supported [3](https://pypi.org/project/twelvedata/)
-    values = ts["values"]
-    # values[0] is latest day, values[1] is previous day
-    return float(values[1]["close"])
+def yahoo_chart(symbol: str, rng="1d", interval="1m", retries=3, backoff=2.0):
+    """
+    Unofficial Yahoo Finance endpoint. Requires a browser-like User-Agent. [7](https://dev.to/avabuildsdata/how-to-get-historical-stock-data-from-yahoo-finance-without-paying-for-an-api-key-5ein)
+    """
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+    params = {"range": rng, "interval": interval}
+    headers = {"User-Agent": UA, "Accept": "application/json"}
 
-def today_open_from_1min(symbol: str, today_local: dt.date) -> float:
-    # Derive open as the first 1-min bar from 09:00–09:10 (Exchange timezone)
-    # start_date/end_date are supported and described by Twelve Data support docs [5](https://support.twelvedata.com/en/articles/5214728-getting-historical-data)
-    start = dt.datetime.combine(today_local, dt.time(9, 0), TZ).strftime("%Y-%m-%d %H:%M:%S")
-    end   = dt.datetime.combine(today_local, dt.time(9, 10), TZ).strftime("%Y-%m-%d %H:%M:%S")
-    ts = td_time_series(
-        symbol,
-        "1min",
-        start_date=start,
-        end_date=end,
-        timezone="Exchange",
-        order="ASC"  # request chronological bars
-    )
-    values = ts["values"]
-    # first bar open
-    return float(values[0]["open"])
+    last_err = None
+    for i in range(retries):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=20)
+            if r.status_code == 429:
+                # rate limited; wait and retry
+                time.sleep(backoff * (i + 1))
+                continue
+            r.raise_for_status()
+            data = r.json()
+            result = data.get("chart", {}).get("result")
+            if not result:
+                raise RuntimeError(f"No chart result for {symbol}: {data}")
+            return result[0]
+        except Exception as e:
+            last_err = e
+            time.sleep(backoff * (i + 1))
+    raise RuntimeError(f"Yahoo chart failed for {symbol}: {last_err}")
 
-def current_price(symbol: str) -> float:
-    p = td_price(symbol)  # latest price [1](https://twelvedata.com/docs)
-    return float(p["price"])
+def extract_prev_close_open_last(chart_obj):
+    meta = chart_obj["meta"]
 
-def compute_signal(now_local: dt.datetime):
-    today = now_local.date()
+    # Previous close fields are typically present in meta
+    prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
+    if prev_close is None:
+        raise RuntimeError("prev_close not found in meta")
 
-    sie_prev = prev_close_1day(SIE_SYMBOL)
-    sie_open = today_open_from_1min(SIE_SYMBOL, today)
-    sie_last = current_price(SIE_SYMBOL)
+    # Latest "regular market" price in meta
+    last_price = meta.get("regularMarketPrice")
+    if last_price is None:
+        # fallback: last close from the series
+        closes = chart_obj["indicators"]["quote"][0]["close"]
+        last_price = next(x for x in reversed(closes) if x is not None)
 
-    mkt_prev = prev_close_1day(MKT_SYMBOL)
-    mkt_last = current_price(MKT_SYMBOL)
+    # Derive today's open from first non-null 1m bar open
+    opens = chart_obj["indicators"]["quote"][0]["open"]
+    first_open = next(x for x in opens if x is not None)
+
+    return float(prev_close), float(first_open), float(last_price)
+
+def main():
+    now = dt.datetime.now(TZ)
+
+    # Optional: only weekdays
+    if now.weekday() >= 5:
+        return
+
+    # Pull data
+    sie_chart = yahoo_chart(SIE, rng="1d", interval="1m")
+    dax_chart = yahoo_chart(MKT, rng="1d", interval="1m")
+
+    sie_prev, sie_open, sie_last = extract_prev_close_open_last(sie_chart)
+    dax_prev, dax_open, dax_last = extract_prev_close_open_last(dax_chart)
 
     gap = (sie_open / sie_prev) - 1.0
-    mkt_chg = (mkt_last / mkt_prev) - 1.0
+    mkt_chg = (dax_last / dax_prev) - 1.0
 
     cond_gap = (gap >= GAP_MIN) and (gap <= GAP_MAX)
     cond_mkt = (mkt_chg > 0.0)
     cond_confirm = (sie_last >= sie_open)
 
-    ok = cond_gap and cond_mkt and cond_confirm
-
-    snapshot = {
-        "ts": now_local.isoformat(),
-        "sie": {"prev_close": sie_prev, "open": sie_open, "last": sie_last, "gap": gap},
-        "mkt": {"symbol": MKT_SYMBOL, "prev_close": mkt_prev, "last": mkt_last, "chg": mkt_chg},
-        "conditions": {"gap": cond_gap, "market": cond_mkt, "confirm": cond_confirm},
-        "signal": "BUY" if ok else "NO"
-    }
-    return ok, snapshot
-
-def main():
-    now_local = dt.datetime.now(TZ)
-
-    # Safety: run only on weekdays (optional)
-    if now_local.weekday() >= 5:
-        return
-
-    ok, snap = compute_signal(now_local)
-
-    # Always write a log artifact (useful for debugging)
-    with open("signal_log.json", "w", encoding="utf-8") as f:
-        json.dump(snap, f, ensure_ascii=False, indent=2)
-
-    if ok:
+    if cond_gap and cond_mkt and cond_confirm:
         msg = (
-            f"✅ GREEN LIGHT – {SIE_SYMBOL}\n\n"
-            f"Gap: {snap['sie']['gap']:.2%}\n"
-            f"Market ({snap['mkt']['symbol']}): {snap['mkt']['chg']:.2%}\n"
-            f"Open: {snap['sie']['open']:.2f} | Last: {snap['sie']['last']:.2f}\n\n"
+            f"✅ GREEN LIGHT – {SIE}\n\n"
+            f"Gap (Open vs PrevClose): {gap:.2%}\n"
+            f"Market ({MKT}) vs PrevClose: {mkt_chg:.2%}\n"
+            f"SIE Open: {sie_open:.2f} | SIE Last: {sie_last:.2f}\n\n"
             "Reminder:\n"
             "• Stop: -0.6%\n"
             "• TP1: +1.0% (sell 50%)\n"
