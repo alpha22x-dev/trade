@@ -1,8 +1,6 @@
 name: Alpha22x Daily Check
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 env:
