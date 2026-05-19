@@ -109,16 +109,17 @@ def main():
         f"Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n"
         f"SIE prev close: {sie_prev:.2f}\n"
         f"SIE open (1m):  {sie_open:.2f}\n"
+        f"Gap:            {gap:.2%}  (target {GAP_MIN:.2%}–{GAP_MAX:.2%})\n"
+        f"••• Gap OK:        {cond_gap}\n\n"
+        
         f"SIE last:       {sie_last:.2f}\n"
-        f"Gap:            {gap:.2%}  (target {GAP_MIN:.2%}–{GAP_MAX:.2%})\n\n"
+        f"••• Confirm OK:    {cond_confirm}\n\n"
+        
         f"DAX prev close: {dax_prev:.2f}\n"
         f"DAX open (1m):  {dax_open:.2f}\n"
         f"DAX last:       {dax_last:.2f}\n"
-        f"Market change:  {mkt_chg:.2%}  (need > 0)\n\n"
-        f"Checks:\n"
-        f"• Gap OK:        {cond_gap}\n"
-        f"• Market OK:     {cond_mkt}\n"
-        f"• Confirm OK:    {cond_confirm}\n"
+        f"Market change:  {mkt_chg:.2%}  (need > 0)\n"
+        f"••• Market OK:     {cond_mkt}\n"
     )
 
     if ok:
