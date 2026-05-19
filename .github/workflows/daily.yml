@@ -5,7 +5,8 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
+  TZ: Europe/Berlin
+  
 # Needed because we commit state.json back to the repo
 permissions:
   contents: write
