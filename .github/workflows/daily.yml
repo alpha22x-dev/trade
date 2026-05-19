@@ -1,10 +1,11 @@
 name: Alpha22x Daily Check
 
-on:
-  schedule:
     # Runs Mon-Fri at 07:25 UTC.
     # This corresponds to 09:25 in Europe/Berlin during summer time (CEST).
     #- cron: "25 7 * * 1-5"
+    
+on:
+  schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
