@@ -102,34 +102,59 @@ def main():
     ok = cond_gap and cond_mkt and cond_confirm
 
     # Build a consistent message for BOTH outcomes
-    status_line = "✅ GREEN LIGHT (BUY)" if ok else "❌ NO TRADE (conditions not met)"
+status_line = "✅ GREEN LIGHT (BUY)" if ok else "❌ NO TRADE (conditions not met)"
 
-    msg = (
-        f"{status_line} — {SIE}\n"
-        f"Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n"
-        f"SIE prev close: {sie_prev:.2f}\n"
-        f"SIE open (1m):  {sie_open:.2f}\n"
-        f"SIE last:       {sie_last:.2f}\n"
-        f"Gap:            {gap:.2%}  (target {GAP_MIN:.2%}–{GAP_MAX:.2%})\n\n"
-        f"DAX prev close: {dax_prev:.2f}\n"
-        f"DAX open (1m):  {dax_open:.2f}\n"
-        f"DAX last:       {dax_last:.2f}\n"
-        f"Market change:  {mkt_chg:.2%}  (need > 0)\n\n"
-        f"Checks:\n"
-        f"• Gap OK:        {cond_gap}\n"
-        f"• Market OK:     {cond_mkt}\n"
-        f"• Confirm OK:    {cond_confirm}\n"
+# --- Block 1: SIE gap block ---
+block1 = (
+    "1) GAP (SIE)\n"
+    f"• SIE prev close: {sie_prev:.2f}\n"
+    f"• SIE open (1m):  {sie_open:.2f}\n"
+    f"• Gap:            {gap:.2%}  (target {GAP_MIN:.2%}–{GAP_MAX:.2%})\n"
+    f"• Gap check:      {cond_gap}\n"
+)
+
+# --- Block 2: DAX market block ---
+block2 = (
+    "2) MARKET (DAX)\n"
+    f"• DAX prev close: {dax_prev:.2f}\n"
+    f"• DAX open (1m):  {dax_open:.2f}\n"
+    f"• DAX last:       {dax_last:.2f}\n"
+    f"• Market change:  {mkt_chg:.2%}  (need > 0)\n"
+    f"• Market check:   {cond_mkt}\n"
+)
+
+# --- Block 3: SIE confirmation block ---
+block3 = (
+    "3) CONFIRM (SIE)\n"
+    f"• SIE last:       {sie_last:.2f}\n"
+    f"• SIE open (1m):  {sie_open:.2f}\n"
+    f"• Confirm check:  {cond_confirm}\n"
+)
+
+# Optional: compact summary at the end (nice for scanning)
+summary = (
+    "\nSummary\n"
+    f"• Signal:         {'BUY' if ok else 'NO TRADE'}\n"
+    f"• Time:           {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+)
+
+# Optional: trade plan reminder only when BUY
+trade_plan = ""
+if ok:
+    trade_plan = (
+        "\nTrade plan reminder\n"
+        "• Stop: -0.6%\n"
+        "• TP1: +1.0% (sell 50%)\n"
+        "• Exit all by 14:30\n"
     )
 
-    if ok:
-        msg += (
-            "\nTrade plan reminder:\n"
-            "• Stop: -0.6%\n"
-            "• TP1: +1.0% (sell 50%)\n"
-            "• Exit all by 14:30\n"
-        )
+msg = (
+    f"{status_line} — {SIE}\n\n"
+    f"{block1}\n"
+    f"{block2}\n"
+    f"{block3}"
+    f"{summary}"
+    f"{trade_plan}"
+)
 
-    send_telegram(msg)
-
-if __name__ == "__main__":
-    main()
+send_telegram(msg)  
