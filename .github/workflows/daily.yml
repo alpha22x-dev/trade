@@ -5,11 +5,6 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  TZ: Europe/Berlin
-  
-# Needed because we commit state.json back to the repo
-permissions:
-  contents: write
 
 jobs:
   run:
@@ -18,16 +13,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Debug — run context
-        run: |
-          echo "Event: ${{ github.event_name }}"
-          echo "Ref:   ${{ github.ref }}"
-          echo "SHA:   ${{ github.sha }}"
-          echo "UTC time:"
-          date -u
-          echo "Local time (TZ=${TZ}):"
-          date
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -44,19 +29,3 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python runner.py
-
-      # Persist Telegram update offset across runs (state.json) so "fill ..." replies are processed once
-      - name: Commit state.json if changed
-        run: |
-          git config user.name "alpha22x-bot"
-          git config user.email "alpha22x-bot@users.noreply.github.com"
-
-          git add state.json || true
-
-          if git diff --cached --quiet; then
-            echo "No state changes."
-            exit 0
-          fi
-
-          git commit -m "Update Telegram state"
-          git push
