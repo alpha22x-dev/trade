@@ -109,9 +109,10 @@ def main():
         f"Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n"
         f"SIE prev close: {sie_prev:.2f}\n"
         f"SIE open (1m):  {sie_open:.2f}\n"
-        f"Gap:            {gap:.2%}  (target {GAP_MIN:.2%}–{GAP_MAX:.2%})\n"
+        f"Gap:  {gap:.2%}  (target {GAP_MIN:.2%}–{GAP_MAX:.2%})\n"
         f"••• Gap OK:        {cond_gap}\n\n"
         
+        f"SIE open (1m):  {sie_open:.2f}\n"        
         f"SIE last:       {sie_last:.2f}\n"
         f"••• Confirm OK:    {cond_confirm}\n\n"
         
