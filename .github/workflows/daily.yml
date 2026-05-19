@@ -12,6 +12,9 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
+      - name: debug
+        run:
+          echo "fire"
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
