@@ -6,25 +6,31 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Europe/Berlin")
 
-SIE = "SIE.DE"     # Siemens (Xetra) [1](https://finance.yahoo.com/quote/SIE.DE/)
-MKT = "^GDAXI"     # DAX index [2](https://uk.finance.yahoo.com/quote/%5EGDAXI/)
+SIE = "SIE.DE"      # Siemens on Yahoo Finance (Xetra) [4](https://eodhd.com/financial-summary/DB1.XETRA)
+MKT = "^GDAXI"      # DAX index on Yahoo Finance [5](https://www.chartmill.com/stock/quote/DB1.DE/profile)
 
-GAP_MIN = 0.003    # +0.3%
-GAP_MAX = 0.015    # +1.5%
+# Strategy thresholds
+GAP_MIN = 0.003     # +0.3%
+GAP_MAX = 0.015     # +1.5% (optional cap)
 
 TG_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
 TG_CHATID = os.environ["TELEGRAM_CHAT_ID"]
 
+# Yahoo chart endpoint is unofficial; a browser-like UA helps avoid rejects/rate limits. [2](https://www.siemens.com/en-us/company/investor-relations/financial-calendar/)[3](https://www.google.com/finance/beta/quote/DB1:FRA)
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
 
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    r = requests.post(url, json={"chat_id": TG_CHATID, "text": text}, timeout=20)
+    r = requests.post(
+        url,
+        json={"chat_id": TG_CHATID, "text": text, "disable_web_page_preview": True},
+        timeout=20
+    )
     r.raise_for_status()
 
 def yahoo_chart(symbol: str, rng="1d", interval="1m", retries=3, backoff=2.0):
     """
-    Unofficial Yahoo Finance endpoint. Requires a browser-like User-Agent. [7](https://dev.to/avabuildsdata/how-to-get-historical-stock-data-from-yahoo-finance-without-paying-for-an-api-key-5ein)
+    Unofficial Yahoo Finance endpoint. Requires a browser-like User-Agent in many cases. [2](https://www.siemens.com/en-us/company/investor-relations/financial-calendar/)[3](https://www.google.com/finance/beta/quote/DB1:FRA)
     """
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
     params = {"range": rng, "interval": interval}
@@ -35,7 +41,6 @@ def yahoo_chart(symbol: str, rng="1d", interval="1m", retries=3, backoff=2.0):
         try:
             r = requests.get(url, params=params, headers=headers, timeout=20)
             if r.status_code == 429:
-                # rate limited; wait and retry
                 time.sleep(backoff * (i + 1))
                 continue
             r.raise_for_status()
@@ -50,40 +55,43 @@ def yahoo_chart(symbol: str, rng="1d", interval="1m", retries=3, backoff=2.0):
     raise RuntimeError(f"Yahoo chart failed for {symbol}: {last_err}")
 
 def extract_prev_close_open_last(chart_obj):
+    """
+    Returns:
+      prev_close: yesterday close (from meta)
+      open_price: today's open approximated by first non-null 1m bar open
+      last_price: regularMarketPrice (or last non-null close fallback)
+    """
     meta = chart_obj["meta"]
 
-    # Previous close fields are typically present in meta
     prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
     if prev_close is None:
         raise RuntimeError("prev_close not found in meta")
 
-    # Latest "regular market" price in meta
     last_price = meta.get("regularMarketPrice")
     if last_price is None:
-        # fallback: last close from the series
         closes = chart_obj["indicators"]["quote"][0]["close"]
         last_price = next(x for x in reversed(closes) if x is not None)
 
-    # Derive today's open from first non-null 1m bar open
     opens = chart_obj["indicators"]["quote"][0]["open"]
-    first_open = next(x for x in opens if x is not None)
+    open_price = next(x for x in opens if x is not None)
 
-    return float(prev_close), float(first_open), float(last_price)
+    return float(prev_close), float(open_price), float(last_price)
 
 def main():
     now = dt.datetime.now(TZ)
 
-    # Optional: only weekdays
+    # Optional: weekdays only
     if now.weekday() >= 5:
         return
 
-    # Pull data
+    # Fetch SIE and DAX data
     sie_chart = yahoo_chart(SIE, rng="1d", interval="1m")
     dax_chart = yahoo_chart(MKT, rng="1d", interval="1m")
 
     sie_prev, sie_open, sie_last = extract_prev_close_open_last(sie_chart)
     dax_prev, dax_open, dax_last = extract_prev_close_open_last(dax_chart)
 
+    # Compute conditions
     gap = (sie_open / sie_prev) - 1.0
     mkt_chg = (dax_last / dax_prev) - 1.0
 
@@ -91,18 +99,37 @@ def main():
     cond_mkt = (mkt_chg > 0.0)
     cond_confirm = (sie_last >= sie_open)
 
-    if cond_gap and cond_mkt and cond_confirm:
-        msg = (
-            f"✅ GREEN LIGHT – {SIE}\n\n"
-            f"Gap (Open vs PrevClose): {gap:.2%}\n"
-            f"Market ({MKT}) vs PrevClose: {mkt_chg:.2%}\n"
-            f"SIE Open: {sie_open:.2f} | SIE Last: {sie_last:.2f}\n\n"
-            "Reminder:\n"
+    ok = cond_gap and cond_mkt and cond_confirm
+
+    # Build a consistent message for BOTH outcomes
+    status_line = "✅ GREEN LIGHT (BUY)" if ok else "❌ NO TRADE (conditions not met)"
+
+    msg = (
+        f"{status_line} — {SIE}\n"
+        f"Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n"
+        f"SIE prev close: {sie_prev:.2f}\n"
+        f"SIE open (1m):  {sie_open:.2f}\n"
+        f"SIE last:       {sie_last:.2f}\n"
+        f"Gap:            {gap:.2%}  (target {GAP_MIN:.2%}–{GAP_MAX:.2%})\n\n"
+        f"DAX prev close: {dax_prev:.2f}\n"
+        f"DAX open (1m):  {dax_open:.2f}\n"
+        f"DAX last:       {dax_last:.2f}\n"
+        f"Market change:  {mkt_chg:.2%}  (need > 0)\n\n"
+        f"Checks:\n"
+        f"• Gap OK:        {cond_gap}\n"
+        f"• Market OK:     {cond_mkt}\n"
+        f"• Confirm OK:    {cond_confirm}\n"
+    )
+
+    if ok:
+        msg += (
+            "\nTrade plan reminder:\n"
             "• Stop: -0.6%\n"
             "• TP1: +1.0% (sell 50%)\n"
             "• Exit all by 14:30\n"
         )
-        send_telegram(msg)
+
+    send_telegram(msg)
 
 if __name__ == "__main__":
     main()
