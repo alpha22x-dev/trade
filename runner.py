@@ -1,4 +1,3 @@
-
 import os
 import time
 import requests
@@ -7,19 +6,27 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Europe/Berlin")
 
-# Yahoo Finance tickers
-SIE = "SIE.DE"      # Siemens (Xetra) [1](https://www.marketsmojo.com/news/stocks-in-action/siemens-ltd-opens-strong-with-significant-gap-up-reflecting-positive-market-sentiment-3937992)
-SAP = "SAP.DE"      # SAP (Xetra) [2](https://finance.yahoo.com/quote/SAP.DE/)
-MKT = "^GDAXI"      # DAX index [3](https://www.marketwatch.com/investing/stock/sie/download-data?countrycode=de&iso=xfra)
+# Market proxy (Yahoo Finance)
+MKT = "^GDAXI"  # DAX index [7](https://github.com/pssolanki111/polygon)
 
-# Strategy thresholds (same logic)
-GAP_MIN = 0.003     # +0.3%
-GAP_MAX = 0.015     # +1.5%
+# 6 selected DAX stocks (Yahoo Finance tickers)
+STOCKS = [
+    ("Siemens",        "SIE.DE"),  # [1](https://community.smartthings.com/t/pushcut-api-how-to-integrate-smart-notifications/169592)
+    ("Siemens Energy", "ENR.DE"),  # [2](https://finance.yahoo.com/quote/DB1.DE/)
+    ("Infineon",       "IFX.DE"),  # [3](https://www.prorealtime.com/en/web/xetr-db1/deutsche-boerse)
+    ("Rheinmetall",    "RHM.DE"),  # [4](https://www.marketsmojo.com/news/stocks-in-action/siemens-ltd-opens-strong-with-significant-gap-up-reflecting-positive-market-sentiment-3937992)
+    ("Deutsche Bank",  "DBK.DE"),  # [5](https://www.tradingview.com/script/U4jtzP4P-Day-Open-vs-Previous-Day-Close/)
+    ("SAP",            "SAP.DE"),  # [6](https://www.msn.com/en-us/money/stockdetails/fi-a2vpz2?id=a2vpz2&uxmode=ruby)
+]
+
+# Strategy thresholds (same logic as your current)
+GAP_MIN = 0.003   # +0.3%
+GAP_MAX = 0.015   # +1.5%
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID   = os.environ["TELEGRAM_CHAT_ID"]
 
-# Unofficial Yahoo endpoint often needs a browser-like User-Agent and can be rate-limited. [4](https://stockanalysis.com/quote/vie/SIE/history/)[5](https://www.investing.com/indices/germany-30-historical-data)
+# Yahoo's v8 chart endpoint is unofficial; UA helps and requests may be rate limited. [9](https://docs.github.com/en/actions/how-tos/manage-runners)[10](https://github.com/goleos/pushcut-python)
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -37,7 +44,7 @@ def send_telegram(text: str):
 
 def yahoo_chart(symbol: str, rng="1d", interval="1m", retries=3, backoff=2.0) -> dict:
     """
-    Uses Yahoo Finance v8 chart endpoint (unofficial). [4](https://stockanalysis.com/quote/vie/SIE/history/)[5](https://www.investing.com/indices/germany-30-historical-data)
+    Yahoo Finance v8 chart endpoint (unofficial). [9](https://docs.github.com/en/actions/how-tos/manage-runners)[10](https://github.com/goleos/pushcut-python)
     """
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
     params = {"range": rng, "interval": interval}
@@ -64,7 +71,7 @@ def yahoo_chart(symbol: str, rng="1d", interval="1m", retries=3, backoff=2.0) ->
 def extract_prev_close_open_last(chart_obj: dict):
     """
     prev_close: meta.chartPreviousClose or meta.previousClose
-    open: first non-null 1m bar open (approx today's open)
+    open: first non-null 1m bar open
     last: meta.regularMarketPrice (fallback to last non-null close)
     """
     meta = chart_obj["meta"]
@@ -83,19 +90,20 @@ def extract_prev_close_open_last(chart_obj: dict):
 
     return float(prev_close), float(open_price), float(last_price)
 
-def build_message(symbol_label: str, symbol: str,
+def build_message(name: str, symbol: str,
                   prev_close: float, open_px: float, last_px: float,
                   gap: float, gap_ok: bool,
                   mkt_prev: float, mkt_open: float, mkt_last: float,
                   mkt_chg: float, mkt_ok: bool,
                   confirm_ok: bool, ok: bool,
-                  now: dt.datetime) -> str:
+                  now: dt.datetime,
+                  idx: int, total: int) -> str:
     status = "✅ GREEN LIGHT (BUY)" if ok else "❌ NO TRADE"
 
-    msg = (
-        f"{status} — {symbol_label}\n"
+    return (
+        f"{status} — {name} ({symbol}) [{idx}/{total}]\n"
         f"Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n"
-        f"1) GAP ({symbol_label})\n"
+        f"1) GAP ({symbol})\n"
         f"• Prev close: {prev_close:.2f}\n"
         f"• Open:       {open_px:.2f}\n"
         f"• Gap:        {gap:.2%}  (target {GAP_MIN:.2%}–{GAP_MAX:.2%})\n"
@@ -106,76 +114,57 @@ def build_message(symbol_label: str, symbol: str,
         f"• Last:       {mkt_last:.2f}\n"
         f"• Change:     {mkt_chg:.2%}\n"
         f"• Market ok:  {mkt_ok}\n\n"
-        f"3) CONFIRM ({symbol_label})\n"
+        f"3) CONFIRM ({symbol})\n"
         f"• Open:       {open_px:.2f}\n"
         f"• Last:       {last_px:.2f}\n"
         f"• Confirm ok: {confirm_ok}\n"
-    )
-    return msg
-
-def compute_signal_for_symbol(symbol_label: str, symbol: str, mkt_obj: dict, now: dt.datetime) -> str:
-    # Get symbol data
-    obj = yahoo_chart(symbol, rng="1d", interval="1m")
-    prev_close, open_px, last_px = extract_prev_close_open_last(obj)
-
-    # Get market data (already fetched once)
-    mkt_prev, mkt_open, mkt_last = extract_prev_close_open_last(mkt_obj)
-
-    gap = (open_px / prev_close) - 1.0
-    mkt_chg = (mkt_last / mkt_prev) - 1.0
-
-    gap_ok = (GAP_MIN <= gap <= GAP_MAX)
-    mkt_ok = (mkt_chg > 0.0)
-    confirm_ok = (last_px >= open_px)
-
-    ok = gap_ok and mkt_ok and confirm_ok
-
-    return build_message(
-        symbol_label=symbol_label,
-        symbol=symbol,
-        prev_close=prev_close,
-        open_px=open_px,
-        last_px=last_px,
-        gap=gap,
-        gap_ok=gap_ok,
-        mkt_prev=mkt_prev,
-        mkt_open=mkt_open,
-        mkt_last=mkt_last,
-        mkt_chg=mkt_chg,
-        mkt_ok=mkt_ok,
-        confirm_ok=confirm_ok,
-        ok=ok,
-        now=now
     )
 
 def main():
     now = dt.datetime.now(TZ)
 
-    # Optional: only weekdays
+    # Optional: weekdays only
     if now.weekday() >= 5:
         return
 
-    # Fetch market proxy once (reused for both symbols)
+    # Fetch market proxy once (reuse across all stocks)
     mkt_obj = yahoo_chart(MKT, rng="1d", interval="1m")
+    mkt_prev, mkt_open, mkt_last = extract_prev_close_open_last(mkt_obj)
+    mkt_chg = (mkt_last / mkt_prev) - 1.0
+    mkt_ok = (mkt_chg > 0.0)
 
-    # 1st Telegram message: Siemens
-    sie_msg = compute_signal_for_symbol("SIE.DE", SIE, mkt_obj, now)
-    send_telegram(sie_msg)
+    total = len(STOCKS)
 
-    # 2nd Telegram message: SAP (same logic)
-    sap_msg = compute_signal_for_symbol("SAP.DE", SAP, mkt_obj, now)
-    send_telegram(sap_msg)
+    for i, (name, symbol) in enumerate(STOCKS, start=1):
+        try:
+            obj = yahoo_chart(symbol, rng="1d", interval="1m")
+            prev_close, open_px, last_px = extract_prev_close_open_last(obj)
+
+            gap = (open_px / prev_close) - 1.0
+            gap_ok = (GAP_MIN <= gap <= GAP_MAX)
+            confirm_ok = (last_px >= open_px)
+
+            ok = gap_ok and mkt_ok and confirm_ok
+
+            msg = build_message(
+                name=name, symbol=symbol,
+                prev_close=prev_close, open_px=open_px, last_px=last_px,
+                gap=gap, gap_ok=gap_ok,
+                mkt_prev=mkt_prev, mkt_open=mkt_open, mkt_last=mkt_last,
+                mkt_chg=mkt_chg, mkt_ok=mkt_ok,
+                confirm_ok=confirm_ok, ok=ok,
+                now=now,
+                idx=i, total=total
+            )
+            send_telegram(msg)
+
+        except Exception as e:
+            # Continue to next stock if one fails (Yahoo can be flaky/rate-limited). [10](https://github.com/goleos/pushcut-python)[8](https://oneuptime.com/blog/post/2026-01-25-github-actions-self-hosted-runners/view)
+            send_telegram(
+                f"⚠️ ERROR — {name} ({symbol}) [{i}/{total}]\n"
+                f"Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                f"{type(e).__name__}: {e}"
+            )
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        now = dt.datetime.now(TZ)
-        # Yahoo Finance is informational and can be delayed; endpoint is unofficial and may fail. [6](https://www.ifcmarkets.com/en/historical-data/stocks-history/sie)[5](https://www.investing.com/indices/germany-30-historical-data)
-        send_telegram(
-            "⚠️ alpha22x_bot ERROR\n"
-            f"Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-            f"{type(e).__name__}: {e}"
-        )
-        raise
-import datetime as dt
+    main()
