@@ -107,8 +107,8 @@ def build_message(symbol_label: str, symbol: str,
         f"• Change:     {mkt_chg:.2%}\n"
         f"• Market ok:  {mkt_ok}\n\n"
         f"3) CONFIRM ({symbol_label})\n"
-        f"• Last:       {last_px:.2f}\n"
         f"• Open:       {open_px:.2f}\n"
+        f"• Last:       {last_px:.2f}\n"
         f"• Confirm ok: {confirm_ok}\n"
     )
     return msg
