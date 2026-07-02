@@ -135,7 +135,7 @@ def get_dca_amount_eur(last_price: Decimal) -> Decimal:
     if last_price > Decimal("58000"):
         return Decimal("100")
     elif Decimal("53000") <= last_price <= Decimal("58000"):
-        return Decimal("110")
+        return Decimal("5500")
     else:
         return Decimal("120")
 
