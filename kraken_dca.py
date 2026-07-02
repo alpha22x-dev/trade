@@ -149,11 +149,11 @@ def get_market_snapshot(pair_key: str) -> dict:
 
 def get_dca_amount_eur(last_price: Decimal) -> Decimal:
     if last_price > Decimal("58000"):
-        return Decimal("100")
+        return Decimal("1000")
     elif Decimal("53000") <= last_price <= Decimal("58000"):
-        return Decimal("5500")
+        return Decimal("1100")
     else:
-        return Decimal("120")
+        return Decimal("1200")
 
 
 def make_post_only_price(best_bid: Decimal, meta: dict) -> Decimal:
