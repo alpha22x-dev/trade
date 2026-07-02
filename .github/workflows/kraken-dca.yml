@@ -34,7 +34,7 @@ jobs:
 
           # Phase de test : true
           # Production : false
-          DRY_RUN: "true"
+          DRY_RUN: "false"
 
           MAX_RETRIES: "3"
           POST_ONLY_TICKS_BELOW_BID: "1"
