@@ -5,6 +5,8 @@ import hmac
 import base64
 import hashlib
 import urllib.parse
+import smtplib
+from email.mime.text import MIMEText
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timezone
 from uuid import uuid5, NAMESPACE_URL
@@ -27,6 +29,19 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 API_KEY = os.environ["KRAKEN_API_KEY"]
 API_SECRET = os.environ["KRAKEN_API_SECRET"]
+
+def send_email(subject, body):
+    gmail_user = os.environ["GMAIL_USERNAME"]
+    gmail_password = os.environ["GMAIL_APP_PASSWORD"]
+
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = gmail_user
+    msg["To"] = "pierre.poirier.dbg@gmail.com"
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(gmail_user, gmail_password)
+        smtp.send_message(msg)
 
 
 def public_get(endpoint: str, params: dict | None = None) -> dict:
@@ -199,6 +214,23 @@ def place_dca_order() -> dict:
 
         try:
             result = private_post("AddOrder", order)
+            body = f"""
+            Pair       : {PAIR}
+            Mode       : {'TEST' if DRY_RUN else 'LIVE'}
+            Prix BTC   : {last_price}
+            Montant EUR: {amount_eur}
+            Prix limite: {limit_price}
+            Volume BTC : {volume_btc}
+            
+            Réponse Kraken:
+            {json.dumps(result, indent=2)}
+            """
+            
+            send_email(
+                f"[Kraken DCA] {'TEST' if DRY_RUN else 'LIVE'} OK",
+                body
+            )
+            
             print(json.dumps(result, indent=2))
             return result
 
@@ -220,5 +252,13 @@ def place_dca_order() -> dict:
 
 
 if __name__ == "__main__":
-    result = place_dca_order()
-    print("DCA completed")
+    try:
+        result = place_dca_order()
+        print("DCA completed")
+
+    except Exception as e:
+        send_email(
+            "[Kraken DCA] ERROR",
+            str(e)
+        )
+        raise
