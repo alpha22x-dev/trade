@@ -1,0 +1,38 @@
+name: Kraken EUR/BTC DCA
+
+on:
+  schedule:
+    # Mardi et vendredi à 07:00 UTC
+    - cron: "0 7 * * 2,5"
+
+  workflow_dispatch:
+
+jobs:
+  dca:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Kraken DCA
+        env:
+          KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
+          KRAKEN_API_SECRET: ${{ secrets.KRAKEN_API_SECRET }}
+          KRAKEN_PAIR: XBTEUR
+
+          # Phase de test : true
+          # Production : false
+          DRY_RUN: "true"
+
+          MAX_RETRIES: "3"
+          POST_ONLY_TICKS_BELOW_BID: "1"
+        run: python kraken_dca.py
