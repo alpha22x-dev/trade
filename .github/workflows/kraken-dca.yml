@@ -30,6 +30,7 @@ jobs:
           KRAKEN_PAIR: XBTEUR
           GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SAFETY_BUFFER_EUR: "2"
 
           # Phase de test : true
           # Production : false
