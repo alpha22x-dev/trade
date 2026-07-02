@@ -30,6 +30,22 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 API_KEY = os.environ["KRAKEN_API_KEY"]
 API_SECRET = os.environ["KRAKEN_API_SECRET"]
 
+SAFETY_BUFFER_EUR = Decimal(os.getenv("SAFETY_BUFFER_EUR", "2"))
+
+
+def get_eur_balance() -> Decimal:
+    balances = private_post("Balance", {})
+
+    # Kraken utilise souvent ZEUR pour EUR
+    eur_balance = Decimal(str(
+        balances.get("ZEUR")
+        or balances.get("EUR")
+        or "0"
+    ))
+
+    return eur_balance
+
+
 def send_email(subject, body):
     gmail_user = os.environ["GMAIL_USERNAME"]
     gmail_password = os.environ["GMAIL_APP_PASSWORD"]
@@ -168,6 +184,18 @@ def place_dca_order() -> dict:
 
         amount_eur = get_dca_amount_eur(last_price)
         limit_price = make_post_only_price(best_bid, meta)
+
+        eur_balance = get_eur_balance()
+
+        SAFETY_BUFFER_EUR = Decimal(os.getenv("SAFETY_BUFFER_EUR", "2"))
+        required_eur = amount_eur + SAFETY_BUFFER_EUR
+        
+        if eur_balance < required_eur:
+            raise RuntimeError(
+                f"Solde EUR insuffisant: disponible={eur_balance} EUR, "
+                f"requis={required_eur} EUR incluant buffer={SAFETY_BUFFER_EUR} EUR. "
+                f"Aucun ordre envoyé."
+            )
 
         volume_btc = amount_eur / limit_price
         volume_btc = decimal_floor(volume_btc, meta["lot_decimals"])
